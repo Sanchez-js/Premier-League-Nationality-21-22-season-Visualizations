@@ -1,0 +1,197 @@
+---
+title: "refined nationalities prem"
+author: "Jose Sanchez"
+date: "2022-07-22"
+output: html_document
+---
+
+
+```{r}
+#clean environment when first loading
+rm(list = ls())
+
+library(rvest)
+
+#read target website
+website_url <- read_html("https://fbref.com/en/comps/9/nations/Premier-League-Nationalities")
+
+#find table using xpath
+prem_nationalities <- website_url%>%html_nodes(xpath='//*[@id="nations"]')%>%html_table()
+
+#prem_nationalities is output as a tibble, convert tibble to data frame for manipulation
+prem_nationalities <- as.data.frame(prem_nationalities)
+
+```
+
+```{r}
+library(stringr)
+
+#making some adjustments to data frame so I create a copy to see changes
+abbreviated_country_and_country_name <- as.data.frame(prem_nationalities$Nation)
+
+#data frame name references original data frame, not ideal so renamed names(abbreviated_country_and_country_name)
+
+names(abbreviated_country_and_country_name)[names(abbreviated_country_and_country_name) == 'prem_nationalities$Nation'] <- 'N2'
+
+# Split abbrev and nation into separate columns
+abbreviated_country_and_country_name[c('NAT', 'Nation')] <- str_split_fixed(abbreviated_country_and_country_name$N2, ' ', 2)
+
+ 
+# Rearrange columns 
+abbreviated_country_and_country_name <- abbreviated_country_and_country_name[c('NAT', 'Nation', 'N2')]
+
+#take out column with both abbrev and name bc we no longer need it moving forward.
+abbreviated_country_and_country_name <- subset (abbreviated_country_and_country_name, select = -N2)
+
+```
+
+
+```{r}
+library(dplyr)
+
+
+number_of_players_per_country <- prem_nationalities$X..Players
+number_of_players_per_country <- as.numeric(number_of_players_per_country)
+
+nation_and_count <- data.frame(abbreviated_country_and_country_name$Nation,number_of_players_per_country)
+colnames(nation_and_count) <- c("nation","count")
+
+#Sort decreasing
+clean_nation_and_count <- nation_and_count[order(nation_and_count$count, decreasing = TRUE),]
+rownames(clean_nation_and_count) <- 1:nrow(clean_nation_and_count)
+indices <- c(67,68)
+#Remove indices with errors.
+edited_country_names_clean_nation_and_count <- clean_nation_and_count[-indices,]
+```
+
+```{r}
+
+library(tidyverse)
+#Loading up a world map.
+map.world <- map_data('world')
+
+
+#list of world countries in this dataset
+countries_in_world_data_set <-unique(map.world$region)
+
+#list of nationalities in the premier league
+nations_in_prem <- clean_nation_and_count$nation
+
+#original list had gaps so remove them
+nations_in_prem <- nations_in_prem[nations_in_prem != ""]
+#find which countries are found in the prem but not in the world data set. These will be under different names.
+potential_countries_need_to_fix <- setdiff(nations_in_prem,countries_in_world_data_set)
+
+
+
+#I found Republic of Ireland is just Ireland in this data set by myself but then ran the code to compare the two lists
+
+
+edited_country_names_clean_nation_and_count[6,1] <- "Ireland"
+#This map only has the UK which means that I will have to combine them all and/or make a new map with those countries separate.
+#England, Scotland, Wales, Northern Ireland = UK 
+#Republic of Ireland=Ireland
+#Cote d'Ivoire= Ivory Coast
+#Congo DR= Democratic Republic of the Congo
+#Korea Republic = South Korea
+#IR Iran = Iran
+
+edited_country_names_clean_nation_and_count[15,1] <- "Ivory Coast"
+edited_country_names_clean_nation_and_count[33,1] <- "Democratic Republic of the Congo"
+edited_country_names_clean_nation_and_count[36,1] <- "South Korea"
+edited_country_names_clean_nation_and_count[59,1] <- "Iran"
+
+
+#code missed manually find correct countries now.
+#United States = USA
+edited_country_names_clean_nation_and_count[28,1] <- "USA"
+edited_country_names_clean_nation_and_count[29,1] <- "Jamaica"
+
+```
+
+
+
+
+```{r}
+library(wesanderson)
+#anti_join returns all rows from x without a match in y
+#In our case, that means that all the countries not in the prem_nationalities will be drawn in. This solves the problem of only having a few countries drawn and it not look good.
+anti_join(edited_country_names_clean_nation_and_count, map.world, by = c('nation' = 'region'))
+
+#This will join the countries from the team into our world map,
+map.play <- left_join( map.world, edited_country_names_clean_nation_and_count, by = c('region' = 'nation')) 
+
+#The way we joined the tables makes it so that when we fill or color the plot, only the countries of interest get filled in with the count of how many players. 
+ggplot(map.play, aes( x = long, y = lat, group = group )) +
+  geom_polygon(aes(fill = count))+
+  borders(
+  database = "world",
+  regions = ".",
+  fill = NA,
+  colour = "white",
+  xlim = NULL,
+  ylim = NULL,)+
+  scale_fill_gradientn(colours = wesanderson::wes_palette("Zissou1", 100, type = "continuous"))
+  
+#First draft shows proof of concept.
+```
+
+
+```{r}
+library(ggplot2)   # use development version for coord limits in unprojected coordinates
+library(sf)        # for manipulation of simple features objects
+#Linking to GEOS 3.8.1, GDAL 3.1.1, PROJ 6.3.1
+# for map data
+if(!require('rnaturalearth')) {
+  install.packages('rnaturalearth')
+  library('rnaturalearth')
+}
+world_sf <-  ne_countries(returnclass = "sf", scale = "large")
+uk_sf <- ne_states(country = "united kingdom", returnclass = "sf")
+
+
+#This will join the countries from the team into our world map,
+uk.play <- left_join( uk_sf, edited_country_names_clean_nation_and_count, by = c('geonunit' = 'nation')) 
+
+ggplot() + 
+  geom_sf(data = world_sf, size = 0.2) +
+  geom_sf(data = uk.play, aes(fill = count), color= NA) +
+  theme_minimal() +
+  coord_sf(crs = 27700,xlim = c(-864915.61, 2133167.17), ylim = c(-303381.20, 1348314.06))
+
+```
+
+
+```{r}
+# df = df.rename_axis('Target formation').reset_index()
+# df.loc[df.Numbers < 5, 'Target formation'] = 'Other'
+# df.groupby('Target formation').Numbers
+#    .sum().sort_values(ascending=False)
+#    .plot.barh()
+pie_chart_all_countries <- edited_country_names_clean_nation_and_count[1:12,]
+
+sum_of_all_other_nations <- sum(edited_country_names_clean_nation_and_count[12:66,2])
+
+pie_chart_all_countries[12,1] <- "All Other Countries"
+pie_chart_all_countries[12,2] <- 174
+# Pie Chart with Percentages
+slices <- pie_chart_all_countries$count
+lbls <- pie_chart_all_countries$nation
+pct <- round(slices/sum(slices)*100)
+lbls <- paste(lbls, pct) # add percents to labels
+lbls <- paste(lbls,"%",sep="") # ad % to labels
+pie(slices,labels = lbls, main="Pie Chart of Countries")
+
+library(dplyr)
+library(forcats)
+library(ggplot2)
+
+dataset <- as.tibble(pie_chart_all_countries) %>% 
+  mutate(nation = fct_reorder(nation, count))
+
+ggplot(dataset, aes(x = "", y = count, fill = nation)) +
+  geom_col(width = 1) + 
+  coord_polar(theta = "y") +
+  xlab(NULL)
+
+```
